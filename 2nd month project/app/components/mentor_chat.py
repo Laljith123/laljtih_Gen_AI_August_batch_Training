@@ -12,6 +12,7 @@ Features:
 import time
 import datetime
 import logging
+import re
 from typing import List, Dict, Any, Optional
 import streamlit as st
 
@@ -66,6 +67,63 @@ def _group_sessions_by_date(sessions: List[Dict[str, Any]]) -> Dict[str, List[Di
             groups["Older"].append(s)
 
     return groups
+
+
+def _clean_citation_snippet(raw_text: str) -> str:
+    """Strip markdown headers and format cleanly for citation display."""
+    if not raw_text:
+        return ""
+    # Strip markdown header hashes (#, ##, ###)
+    cleaned = re.sub(r"^#+\s*", "", raw_text, flags=re.MULTILINE)
+    # Remove markdown bold/italic asterisks
+    cleaned = cleaned.replace("**", "").replace("__", "")
+    # Collapse multiple whitespaces and newlines
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:280]
+
+
+def _render_citations_widget(citations: list):
+    """Render grounded sources cleanly without empty-looking boxes or broken markdown headings."""
+    if not citations:
+        return
+
+    unique_titles = []
+    seen = set()
+    for c in citations:
+        t = (c.get("source_title") if isinstance(c, dict) else getattr(c, "source_title", None)) or "Career Guide"
+        if t not in seen:
+            seen.add(t)
+            unique_titles.append(t)
+
+    # Render clean inline badge chips
+    tags_html = "".join([
+        f'<span style="display: inline-flex; align-items: center; background: rgba(59, 130, 246, 0.12); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 9999px; padding: 2px 10px; font-size: 0.78rem; font-weight: 500; margin-right: 5px; margin-bottom: 4px;">{t}</span>'
+        for t in unique_titles
+    ])
+
+    st.markdown(
+        f"""
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 8px; margin-bottom: 6px;">
+            <span style="font-size: 0.8rem; color: var(--sh-text-muted, #94a3b8); margin-right: 4px;">:material/menu_book: Grounded in:</span>
+            {tags_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.expander(f"Verified source excerpts ({len(citations)} chunks)", expanded=False):
+        for c in citations:
+            title = (c.get("source_title") if isinstance(c, dict) else getattr(c, "source_title", None)) or "Document"
+            chunk_idx = (c.get("chunk_index") if isinstance(c, dict) else getattr(c, "chunk_index", 0))
+            snippet = (c.get("snippet") if isinstance(c, dict) else getattr(c, "snippet", ""))
+            clean_snip = _clean_citation_snippet(snippet)
+
+            st.markdown(f"• **{title}** <span style='font-size: 0.76rem; color: var(--sh-text-muted);'>(Section {chunk_idx})</span>", unsafe_allow_html=True)
+            if clean_snip:
+                st.markdown(
+                    f"<div style='font-size: 0.83rem; color: var(--sh-text-muted); padding-left: 14px; margin-bottom: 8px; border-left: 2px solid rgba(255,255,255,0.12);'>“{clean_snip}…”</div>",
+                    unsafe_allow_html=True,
+                )
 
 
 def render_mentor_chat():
@@ -665,11 +723,7 @@ def render_mentor_chat():
 
             # Citations block
             if role == "assistant" and msg.get("citations"):
-                with st.expander(f"Sources ({len(msg['citations'])} documents)", expanded=False):
-                    for c in msg["citations"]:
-                        st.markdown(f"• **{c.get('source_title', 'Document')}** (Chunk {c.get('chunk_index', 0)})")
-                        if c.get("snippet"):
-                            st.caption(f"Excerpt: *\"{c['snippet']}...\"*")
+                _render_citations_widget(msg["citations"])
 
                 # Feedback telemetry
                 f_col1, f_col2, _ = st.columns([1, 1, 4])
@@ -829,12 +883,7 @@ def render_mentor_chat():
 
                 resp_citations = getattr(response, "citations", [])
                 if resp_citations:
-                    with st.expander(f"Sources ({len(resp_citations)} documents)", expanded=False):
-                        for c in resp_citations:
-                            st.markdown(f"• **{getattr(c, 'source_title', 'Document')}**")
-                            snippet = getattr(c, "snippet", "")
-                            if snippet:
-                                st.caption(f"Excerpt: *\"{snippet}...\"*")
+                    _render_citations_widget(resp_citations)
 
                 # Store assistant response in history and persist to database
                 citations_dict = [c.model_dump() for c in resp_citations]
