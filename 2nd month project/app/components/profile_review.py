@@ -46,58 +46,72 @@ def render_profile_review():
                 st.caption("Accepted file formats: **PDF**, **DOCX** · Maximum file size: **10 MB**")
 
             if uploaded_file is not None:
+                file_sig = f"{uploaded_file.name}_{uploaded_file.size}"
+                last_failed_sig = st.session_state.get("_last_failed_upload_sig")
+                has_failed = (last_failed_sig == file_sig)
+
                 with st.container(border=True):
                     f_col1, f_col2 = st.columns([3, 1])
                     with f_col1:
-                        st.markdown(f"**Ready to analyze:** `{uploaded_file.name}`")
-                        st.caption(f"Size: {uploaded_file.size / 1024:.1f} KB · Document ready for extraction")
+                        st.markdown(f"**Uploaded resume:** `{uploaded_file.name}`")
+                        st.caption(f"Size: {uploaded_file.size / 1024:.1f} KB · Parsing candidate competencies...")
                     with f_col2:
                         st.markdown("<div style='margin-top: 6px;'></div>", unsafe_allow_html=True)
-                        if st.button("Analyze resume", type="primary", key="btn_parse_uploaded"):
-                            with st.spinner("Analyzing resume structure and competencies..."):
-                                try:
-                                    if hasattr(uploaded_file, "getvalue"):
-                                        file_bytes = uploaded_file.getvalue()
-                                    else:
-                                        if hasattr(uploaded_file, "seek"):
-                                            uploaded_file.seek(0)
-                                        file_bytes = uploaded_file.read()
+                        retry_clicked = False
+                        if has_failed:
+                            retry_clicked = st.button("Retry analysis", type="primary", key="btn_retry_uploaded")
 
-                                    if not file_bytes:
-                                        st.error("The uploaded file appears to be empty. Please choose a valid PDF or DOCX file.")
-                                        return
+                should_run = (not has_failed) or retry_clicked
+                if should_run:
+                    with st.spinner(f"Analyzing {uploaded_file.name} structure and competencies..."):
+                        try:
+                            if hasattr(uploaded_file, "getvalue"):
+                                file_bytes = uploaded_file.getvalue()
+                            else:
+                                if hasattr(uploaded_file, "seek"):
+                                    uploaded_file.seek(0)
+                                file_bytes = uploaded_file.read()
 
-                                    doc_info = load_document(file_bytes, filename=uploaded_file.name)
-                                    extracted_text = doc_info.get("text", "").strip()
-                                    if not extracted_text:
-                                        st.error("Could not extract readable text from this document. If this is a scanned or image-only PDF, please upload a text-searchable PDF or DOCX.")
-                                        return
+                            if not file_bytes:
+                                st.session_state["_last_failed_upload_sig"] = file_sig
+                                st.error("The uploaded file appears to be empty. Please choose a valid PDF or DOCX file.")
+                                return
 
-                                    api_key = AppStateManager.get_api_key()
-                                    if not api_key:
-                                        st.error("Gemini API key is not configured. Please enter your API key under **Tools → Settings** in the sidebar, or set `GEMINI_API_KEY` in Streamlit Secrets.")
-                                        return
+                            doc_info = load_document(file_bytes, filename=uploaded_file.name)
+                            extracted_text = doc_info.get("text", "").strip()
+                            if not extracted_text:
+                                st.session_state["_last_failed_upload_sig"] = file_sig
+                                st.error("Could not extract readable text from this document. If this is a scanned or image-only PDF, please upload a text-searchable PDF or DOCX.")
+                                return
 
-                                    st.session_state.uploaded_file_name = uploaded_file.name
-                                    st.session_state.extracted_resume_text = extracted_text
+                            api_key = AppStateManager.get_api_key()
+                            if not api_key:
+                                st.session_state["_last_failed_upload_sig"] = file_sig
+                                st.error("Gemini API key is not configured. Please enter your API key under **Tools → Settings** in the sidebar, or set `GEMINI_API_KEY` in Streamlit Secrets.")
+                                return
 
-                                    profile = parse_resume(extracted_text, api_key=api_key)
-                                    new_container = ProfileReviewManager.initialize_review(profile)
-                                    st.session_state.human_profile_container = new_container
-                                    AppStateManager.set_workflow_state(WorkflowState.PROFILE_REVIEW)
-                                    AppStateManager.invalidate_downstream()
-                                    AuditLogger.log_event("RESUME_PARSED", "AI", "SUCCESS", {"filename": uploaded_file.name})
-                                    st.toast("Resume parsed successfully.")
-                                    st.rerun()
-                                except Exception as ex:
-                                    err_str = str(ex)
-                                    if "GEMINI_API_KEY" in err_str or "API key" in err_str.lower():
-                                        st.error("Gemini API key is missing or invalid. Please check your key under **Tools → Settings** or in your Streamlit Cloud Secrets.")
-                                    elif "RESOURCE_EXHAUSTED" in err_str or "429" in err_str or "quota" in err_str.lower():
-                                        st.error("Gemini API quota or rate limit exceeded. Please wait a minute or provide a different API key in Settings.")
-                                    else:
-                                        st.error(f"Resume analysis could not be completed: {err_str}")
-                                    AuditLogger.log_event("RESUME_PARSE_FAILED", "AI", "ERROR", {"error": err_str})
+                            st.session_state.uploaded_file_name = uploaded_file.name
+                            st.session_state.extracted_resume_text = extracted_text
+
+                            profile = parse_resume(extracted_text, api_key=api_key)
+                            new_container = ProfileReviewManager.initialize_review(profile)
+                            st.session_state.human_profile_container = new_container
+                            st.session_state.pop("_last_failed_upload_sig", None)
+                            AppStateManager.set_workflow_state(WorkflowState.PROFILE_REVIEW)
+                            AppStateManager.invalidate_downstream()
+                            AuditLogger.log_event("RESUME_PARSED", "AI", "SUCCESS", {"filename": uploaded_file.name})
+                            st.toast("Resume parsed successfully.")
+                            st.rerun()
+                        except Exception as ex:
+                            st.session_state["_last_failed_upload_sig"] = file_sig
+                            err_str = str(ex)
+                            if "GEMINI_API_KEY" in err_str or "API key" in err_str.lower():
+                                st.error("Gemini API key is missing or invalid. Please check your key under **Tools → Settings** or in your Streamlit Cloud Secrets.")
+                            elif "RESOURCE_EXHAUSTED" in err_str or "429" in err_str or "quota" in err_str.lower():
+                                st.error("Gemini API quota or rate limit exceeded. Please wait a minute or provide a different API key in Settings.")
+                            else:
+                                st.error(f"Resume analysis could not be completed: {err_str}")
+                            AuditLogger.log_event("RESUME_PARSE_FAILED", "AI", "ERROR", {"error": err_str})
         return
 
     orig = container.original_ai_profile
@@ -165,6 +179,7 @@ def render_profile_review():
         cta_col1, cta_col2 = st.columns([3, 1])
         with cta_col1:
             if st.button("Explore matching jobs →", type="primary", key="btn_to_jobs_from_profile"):
+                st.session_state["_trigger_job_search"] = True
                 AppStateManager.set_active_view("Jobs")
                 st.rerun()
         with cta_col2:
@@ -294,6 +309,7 @@ def render_profile_review():
         ProfileReviewManager.apply_human_approval(container, curr)
         AppStateManager.set_workflow_state(WorkflowState.PROFILE_APPROVED)
         st.session_state.editing_profile = False
+        st.session_state["_trigger_job_search"] = True
         AuditLogger.log_event("PROFILE_APPROVED", "USER", "APPROVED", {"role": curr.target_role})
         st.toast("Profile confirmed successfully.")
         st.rerun()
@@ -313,6 +329,7 @@ def render_profile_review():
         ProfileReviewManager.apply_human_approval(container, edited)
         AppStateManager.set_workflow_state(WorkflowState.PROFILE_APPROVED)
         st.session_state.editing_profile = False
+        st.session_state["_trigger_job_search"] = True
         AuditLogger.log_event("PROFILE_EDITED_AND_APPROVED", "USER", "HUMAN_EDITED", {
             "change_summary": container.change_summary,
             "target_role": edited.target_role,

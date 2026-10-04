@@ -131,6 +131,7 @@ class AppStateManager:
             st.session_state.extracted_resume_text = ""
             st.session_state.uploaded_file_name = None
             st.session_state.editing_profile = False
+            st.session_state.pop("_last_failed_upload_sig", None)
             cls.set_workflow_state(WorkflowState.NO_RESUME)
 
     @classmethod

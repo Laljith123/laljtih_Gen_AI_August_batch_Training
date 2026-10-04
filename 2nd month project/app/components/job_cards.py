@@ -65,6 +65,7 @@ def render_job_matches():
                     if st.button("Confirm profile & search matching jobs →", type="primary", key="btn_quick_confirm_jobs"):
                         prof = container.approved_profile or container.original_ai_profile
                         ProfileReviewManager.apply_human_approval(container, prof)
+                        st.session_state["_trigger_job_search"] = True
                         st.toast("Profile confirmed! Finding matching jobs...")
                         st.rerun()
                 else:
@@ -128,8 +129,10 @@ def render_job_matches():
                 key="slider_job_topk",
             )
 
-    # Search Execution
-    needs_search = search_clicked or (st.session_state.get("job_matches") is None)
+    # Search Execution: Auto-search if no results exist, if triggered via navigation, or if user clicked search
+    existing_matches = st.session_state.get("job_matches")
+    trigger_flag = st.session_state.pop("_trigger_job_search", False)
+    needs_search = search_clicked or trigger_flag or (not existing_matches)
     if needs_search:
         with st.spinner("Finding roles that match your confirmed competencies..."):
             cand_skills = getattr(profile, "skills", []) if profile else []

@@ -119,6 +119,8 @@ with st.sidebar:
         btn_type = "primary" if is_active else "secondary"
         if st.button(view_label, key=f"nav_btn_{view_key}", type=btn_type, width="stretch"):
             if current_view != view_key:
+                if view_key == "Jobs":
+                    st.session_state["_trigger_job_search"] = True
                 AppStateManager.set_active_view(view_key)
                 st.rerun()
 
@@ -219,7 +221,10 @@ if active_view == "Overview":
         with h_col2:
             st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
             if st.button(hero_cta, type="primary", key="btn_hero_next_action"):
-                AppStateManager.set_active_view(summary["next_view"])
+                next_v = summary.get("next_view")
+                if next_v == "Jobs":
+                    st.session_state["_trigger_job_search"] = True
+                AppStateManager.set_active_view(next_v)
                 st.rerun()
 
     # Workflow Stepper Visualization
