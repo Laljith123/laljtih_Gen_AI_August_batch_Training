@@ -705,7 +705,12 @@ def render_mentor_chat():
         if attached_files and len(attached_files) > 0:
             first_file = attached_files[0]
             try:
-                file_bytes = first_file.read()
+                if hasattr(first_file, "getvalue"):
+                    file_bytes = first_file.getvalue()
+                else:
+                    if hasattr(first_file, "seek"):
+                        first_file.seek(0)
+                    file_bytes = first_file.read()
                 doc_info = load_document(file_bytes, filename=first_file.name)
                 st.session_state.uploaded_file_name = first_file.name
                 st.session_state.extracted_resume_text = doc_info["text"]

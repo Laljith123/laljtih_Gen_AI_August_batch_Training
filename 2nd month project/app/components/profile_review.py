@@ -56,12 +56,32 @@ def render_profile_review():
                         if st.button("Analyze resume", type="primary", key="btn_parse_uploaded"):
                             with st.spinner("Analyzing resume structure and competencies..."):
                                 try:
-                                    file_bytes = uploaded_file.read()
-                                    doc_info = load_document(file_bytes, filename=uploaded_file.name)
-                                    st.session_state.uploaded_file_name = uploaded_file.name
-                                    st.session_state.extracted_resume_text = doc_info["text"]
+                                    if hasattr(uploaded_file, "getvalue"):
+                                        file_bytes = uploaded_file.getvalue()
+                                    else:
+                                        if hasattr(uploaded_file, "seek"):
+                                            uploaded_file.seek(0)
+                                        file_bytes = uploaded_file.read()
 
-                                    profile = parse_resume(doc_info["text"], api_key=AppStateManager.get_api_key())
+                                    if not file_bytes:
+                                        st.error("The uploaded file appears to be empty. Please choose a valid PDF or DOCX file.")
+                                        return
+
+                                    doc_info = load_document(file_bytes, filename=uploaded_file.name)
+                                    extracted_text = doc_info.get("text", "").strip()
+                                    if not extracted_text:
+                                        st.error("Could not extract readable text from this document. If this is a scanned or image-only PDF, please upload a text-searchable PDF or DOCX.")
+                                        return
+
+                                    api_key = AppStateManager.get_api_key()
+                                    if not api_key:
+                                        st.error("Gemini API key is not configured. Please enter your API key under **Tools → Settings** in the sidebar, or set `GEMINI_API_KEY` in Streamlit Secrets.")
+                                        return
+
+                                    st.session_state.uploaded_file_name = uploaded_file.name
+                                    st.session_state.extracted_resume_text = extracted_text
+
+                                    profile = parse_resume(extracted_text, api_key=api_key)
                                     new_container = ProfileReviewManager.initialize_review(profile)
                                     st.session_state.human_profile_container = new_container
                                     AppStateManager.set_workflow_state(WorkflowState.PROFILE_REVIEW)
@@ -70,8 +90,14 @@ def render_profile_review():
                                     st.toast("Resume parsed successfully.")
                                     st.rerun()
                                 except Exception as ex:
-                                    st.error("Resume analysis could not be completed. Please ensure the file is a valid PDF or DOCX.")
-                                    AuditLogger.log_event("RESUME_PARSE_FAILED", "AI", "ERROR", {"error": str(ex)})
+                                    err_str = str(ex)
+                                    if "GEMINI_API_KEY" in err_str or "API key" in err_str.lower():
+                                        st.error("Gemini API key is missing or invalid. Please check your key under **Tools → Settings** or in your Streamlit Cloud Secrets.")
+                                    elif "RESOURCE_EXHAUSTED" in err_str or "429" in err_str or "quota" in err_str.lower():
+                                        st.error("Gemini API quota or rate limit exceeded. Please wait a minute or provide a different API key in Settings.")
+                                    else:
+                                        st.error(f"Resume analysis could not be completed: {err_str}")
+                                    AuditLogger.log_event("RESUME_PARSE_FAILED", "AI", "ERROR", {"error": err_str})
         return
 
     orig = container.original_ai_profile

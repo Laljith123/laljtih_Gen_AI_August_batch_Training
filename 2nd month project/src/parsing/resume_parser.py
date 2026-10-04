@@ -48,16 +48,34 @@ Remember: Output valid JSON adhering strictly to the required schema. Never hall
         response_json_schema=ResumeProfile.model_json_schema(),
     )
 
-    response = client.models.generate_content(
-        model=target_model,
-        contents=user_content,
-        config=config,
-    )
+    response = None
+    # Prioritize requested target model, then standard production Gemini models
+    candidate_models = [target_model]
+    for fallback in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]:
+        if fallback not in candidate_models:
+            candidate_models.append(fallback)
 
-    raw_output = response.text
-    if not raw_output:
+    last_err = None
+    for model_candidate in candidate_models:
+        try:
+            response = client.models.generate_content(
+                model=model_candidate,
+                contents=user_content,
+                config=config,
+            )
+            if response and response.text:
+                break
+        except Exception as err:
+            last_err = err
+            logger.warning(f"Resume parsing attempt with {model_candidate} failed: {err}")
+            continue
+
+    if not response or not response.text:
+        if last_err:
+            raise last_err
         raise ValueError("Gemini returned an empty response during resume extraction.")
 
+    raw_output = response.text
     cleaned_json = raw_output.strip()
     if cleaned_json.startswith("```json"):
         cleaned_json = cleaned_json[7:]
